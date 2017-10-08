@@ -63,13 +63,23 @@ SqlParser::SqlParser()
 SqlParser::~SqlParser() {}
 
 // Set target programming language
-void SqlParser::SetLang(const char *pl)
+void SqlParser::SetLang(const char *value, bool source)
 {
-    if(pl == NULL)
+    if(value == NULL)
         return;
 
-    if(_stricmp(pl, "-java") == 0)
-        _target_app = APP_JAVA;
+	short app = 0;
+
+    if(_stricmp(value, "java") == 0)
+        app = APP_JAVA;
+	else
+    if(_stricmp(value, "cobol") == 0)
+        app = APP_COBOL;
+
+	if(source)
+		_source_app = app;
+	else
+		_target_app = app;
 }
 
 
@@ -102,9 +112,13 @@ void SqlParser::SetOption(const char *option, const char *value)
 	if(_stricmp(option, "-meta") == 0 && value != NULL)
 		SetMetaFromFile(value);
     else
+	// Source programming language
+	if(_stricmp(option, "-sl") == 0 && value != NULL)
+		SetLang(value, true);
+    else
 	// Target programming language
-	if(_stricmp(option, "-pl") == 0 && value != NULL)
-		SetLang(value);
+	if(_stricmp(option, "-tl") == 0 && value != NULL)
+		SetLang(value, false);
 }
 
 // Perform conversion
@@ -124,7 +138,7 @@ int SqlParser::Convert(const char *input, int size, const char **output, int *ou
 	// Byte order mark for Unicode
 	GetBomToken();
 
-	// Try to define application type (Java, C#, PowerBuilder, COBOL etc.)
+	// Set application type (Java, C#, PowerBuilder, COBOL etc.)
 	SetApplicationSource();
 
 	// Process tokens until the end of input
@@ -719,6 +733,7 @@ bool SqlParser::GetSingleCharToken(Token *token)
 		token->str = NULL;
 		token->wstr = NULL;
 		token->len = 0;
+		token->line = _line;
 		token->remain_size = _remain_size;
 		token->next_start = _next_start;
 
@@ -902,8 +917,8 @@ bool SqlParser::GetQuotedIdentifier(Token *token, bool starts_as_unquoted)
 			// Go until the end of part
 			while(_remain_size > 0)
 			{
-				// Check whether we meet a special character allowed in identifiers
-				if(strchr(g_symbols, *cur) != NULL && *cur != '_')
+				// Check whether we meet a special character allowed in identifiers (:NEW.name i.e.)
+				if(strchr(g_symbols, *cur) != NULL && *cur != '_' && *cur != ':')
 					break;
 		
 				cur++;
@@ -1545,6 +1560,7 @@ bool SqlParser::GetWordToken(Token *token)
 		token->str = _next_start;
 		token->wstr = 0;
 		token->len = len;
+		token->line = _line;
 		token->remain_size = _remain_size;
 		token->next_start = _next_start + len;
 
@@ -1563,6 +1579,17 @@ void SqlParser::PushBack(Token *token)
 		return;
 
 	_push_back_token = token;
+}
+
+// Check next token for the specific value but do not fecth it from the input
+Token* SqlParser::LookNext(const char *str, const wchar_t *wstr, size_t len)
+{
+	Token *token = GetNext(str, wstr, len);
+
+	if(token != NULL)
+		PushBack(token);
+
+	return token;
 }
 
 // Append the token with the specified value
@@ -2083,6 +2110,7 @@ bool SqlParser::IsValidAlias(Token *token)
 			Token::Compare(token, "FETCH", L"FETCH", 5) == true ||
 			Token::Compare(token, "IF", L"IF", 2) == true ||
 			Token::Compare(token, "GO", L"GO", 2) == true ||
+			Token::Compare(token, "GROUP", L"GROUP", 5) == true ||
 			Token::Compare(token, "ORDER", L"ORDER", 5) == true || 
 			Token::Compare(token, "RETURN", L"RETURN", 6) == true || 
 			Token::Compare(token, "SELECT", L"SELECT", 6) == true || 

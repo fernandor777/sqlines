@@ -205,10 +205,15 @@
 #define APPEND_FIRST_FMT(token, string, format) AppendFirst(token, string, L##string, sizeof(string) - 1, format)
 #define APPEND_FIRST_NOFMT(token, string) AppendFirstNoFormat(token, string, L##string, sizeof(string) - 1)
 #define APPEND_NOFMT(token, string) AppendNoFormat(token, string, L##string, sizeof(string) - 1)
+#define APPENDS(token, tokenstr) Append(token, tokenstr)
+
+#define APPENDSTR(tokenstr, string) tokenstr.Append(string, L##string, sizeof(string) - 1)
 
 #define PREPEND(token, string) Prepend(token, string, L##string, sizeof(string) - 1)
 #define PREPEND_FMT(token, string, format) Prepend(token, string, L##string, sizeof(string) - 1, format)
 #define PREPEND_NOFMT(token, string) PrependNoFormat(token, string, L##string, sizeof(string) - 1)
+
+#define LOOKNEXT(string) LookNext(string, L##string, sizeof(string) - 1)
 
 #define COMMENT(string, start, end) Comment(string, L##string, sizeof(string) - 1, start, end) 
 
@@ -332,6 +337,9 @@ class SqlParser
     // Standalone BEGIN levels in the current procedure (each BEGIN entry is cleared on block exit)
     ListW _spl_begin_blocks;
 
+	// Outer AS or IS keyword
+    Token *_spl_outer_as;
+
     // Last declare statement before the first non-declare statement
 	Token *_spl_last_declare;
     // First non-declare statement in procedure or function
@@ -404,10 +412,13 @@ class SqlParser
 	Token *_spl_returning_end;
 	// Generated OUT variable names for Informix RETURNING clause
 	ListWM _spl_returning_out_names;
+
 	// Number of FOREACH statements in the current procedure (function, trigger)
 	int _spl_foreach_num;
 	// Number of RETURN WITH RESUME in procedure
 	int _spl_return_with_resume;
+	// Number of RETURN statements in procedure
+	int _spl_return_num;
 
 	// Table name from last INSERT statement
 	Token *_spl_last_insert_table_name;
@@ -415,6 +426,8 @@ class SqlParser
 	Token *_spl_last_open_cursor_name;
 	// Cursor name from last FETCH statement
 	Token *_spl_last_fetch_cursor_name;
+	// List of OPEN cursor statemenents 
+	ListW _spl_open_cursors;
 
 	// Prepared statements id
 	ListWM _spl_prepared_stmts;
@@ -447,6 +460,7 @@ class SqlParser
 	bool _spl_proc_to_func;
     // Handler for NOT FOUND condition
     bool _spl_not_found_handler;
+	bool _spl_need_not_found_handler;
 
 	// Monday is 1 day, Sunday is 7 (false if it is unknown from context)
 	bool _spl_monday_1;
@@ -486,7 +500,7 @@ public:
 	// Set source and target types
 	void SetTypes(short source, short target) { _source = source; _target = target; }
     // Set target programming language
-    void SetLang(const char *pl);
+    void SetLang(const char *value, bool source);
 	// Set option
 	void SetOption(const char *option, const char *value);
 
@@ -533,8 +547,13 @@ public:
 	void EnterLocalVariablesBlock();
 	void LeaveLocalVariablesBlock();
 
+	void AddVariable(Token *name) { _spl_variables.Add(name); }
+	void AddParameter(Token *name) { _spl_parameters.Add(name); }
+
 	// Return the last fetched token to the input
 	void PushBack(Token *token);
+	// Check next token for the specific value but do not fecth it from the input
+	Token *LookNext(const char *str, const wchar_t *wstr, size_t len);
 
 	// Append the token with the specified value
 	Token *Append(Token *token, const char *str, const wchar_t *wstr, size_t len, Token *format = NULL);
@@ -568,7 +587,7 @@ public:
 	bool Target(short t1, short t2 = -1, short t3 = -1, short t4 = -1, short t5 = -1, short t6 = -1); 
 
 	// Return first not NULL
-	Token* Nvl(Token *first, Token *second, Token *third = NULL);
+	Token* Nvl(Token *first, Token *second, Token *third = NULL, Token *fourth = NULL);
     Token* NvlLast(Token *first);
 
 	// Enter, leave and check the specified scope
@@ -775,6 +794,7 @@ public:
 	bool ParseDropStatement(Token *drop);
 	bool ParseDropDatabaseStatement(Token *drop, Token *database);
 	bool ParseDropTableStatement(Token *drop, Token *table);
+	bool ParseDropProcedureStatement(Token *drop, Token *procedure);
 	bool ParseDropTriggerStatement(Token *drop, Token *trigger);
 	bool ParseDropSchemaStatement(Token *drop, Token *schema);
 	bool ParseDropSequenceStatement(Token *drop, Token *sequence);
@@ -1249,6 +1269,8 @@ public:
 	bool ParseSqlServerSetOptions(Token *set);
 	bool ParseSqlServerIndexOptions(Token *token);
 	bool ParseSqlServerStorageClause();
+	void ParseSqlServerExecProcedure(Token *execute, Token *name);
+	bool ParseSqlServerUpdateStatement(Token *update);
 
 	bool ParseOracleStorageClause();
 	bool ParseOracleStorageClause(Token *storage);
@@ -1283,6 +1305,8 @@ public:
 	bool ParseMysqlSetOptions(Token *set);
 	bool MysqlCreateDatabase(Token *create, Token *database, Token *name);
     void MySQLAddNotFoundHandler();
+	void MySQLInitNotFoundBeforeOpen();
+	void MySQLMoveCursorDeclarations(Token *declare, Token *cursor_end);
 
 	bool ParseDb2StorageClause();
 	bool ParseDb2PartitioningClause(Token *partition, Token *by);
@@ -1408,7 +1432,10 @@ public:
 	bool CompareIdentifiersExistingParts(Token *first, Token *second);
 	bool CompareIdentifierPart(TokenStr &first, TokenStr &second);
 
-	// Define application type (Java, C#, PowerBuilder, COBOL etc.)
+	// Set parser level (application, SQL, string i.e.)
+	void SetLevel(int level) { _level = level; }
+
+	// Set application type (Java, C#, PowerBuilder, COBOL etc.)
 	void SetApplicationSource();
 
     // Create report file
